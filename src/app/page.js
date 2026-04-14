@@ -24,6 +24,8 @@ export default function HomePage() {
   const [endTime, setEndTime] = useState('')
   const [cause, setCause] = useState('')
   const [workDone, setWorkDone] = useState('')
+  const [genesisAccepted, setGenesisAccepted] = useState('')
+  const [sitePresence, setSitePresence] = useState('')
   const [observations, setObservations] = useState('')
   const [extraType, setExtraType] = useState('50')
   const [stampText, setStampText] = useState('')
@@ -284,7 +286,17 @@ export default function HomePage() {
     e.preventDefault()
     setMessage('')
 
-    if (!site || !ta || !date || !startTime || !endTime || !cause || !workDone) {
+    if (
+      !site ||
+      !ta ||
+      !date ||
+      !startTime ||
+      !endTime ||
+      !cause ||
+      !workDone ||
+      !genesisAccepted ||
+      !sitePresence
+    ) {
       setMessage('Preencha todos os campos obrigatórios.')
       return
     }
@@ -297,15 +309,17 @@ export default function HomePage() {
     }
 
     const generatedStamp = `Nome: ${loggedUser.name}
-RE: ${loggedUser.re}
-Site: ${site}
-TA: ${ta}
-Data: ${formatDateBR(date)}
-Início Atividade: ${startTime}
-Fim Atividade: ${endTime}
-Motivo: ${cause}
-Serviço: ${workDone}
-OBS: ${observations || '-'}`
+    RE: ${loggedUser.re}
+    Site: ${site}
+    TA: ${ta}
+    Data: ${formatDateBR(date)}
+    Início Atividade: ${startTime}
+    Fim Atividade: ${endTime}
+    Aceite no Genesis: ${genesisAccepted}
+    Presença no Site: ${sitePresence}
+    Motivo: ${cause}
+    Serviço: ${workDone}
+    OBS: ${observations || '-'}`
 
     setStampText(generatedStamp)
     setLoading(true)
@@ -315,6 +329,8 @@ OBS: ${observations || '-'}`
       ta,
       cause,
       workDone,
+      genesisAccepted,
+      sitePresence,
       observations,
       stampText: generatedStamp,
     }
@@ -710,6 +726,32 @@ OBS: ${observations || '-'}`
                   onChange={(e) => setEndTime(e.target.value)}
                   className="w-full rounded-lg border border-gray-300 bg-white p-3 text-black outline-none"
                 />
+              </div>
+
+              <div>
+                <label className="block mb-1 font-medium">Aceite no Genesis</label>
+                <select
+                  value={genesisAccepted}
+                  onChange={(e) => setGenesisAccepted(e.target.value)}
+                  className="w-full border rounded px-3 py-2"
+                >
+                  <option value="">Selecione</option>
+                  <option value="Sim">Sim</option>
+                  <option value="Não">Não</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block mb-1 font-medium">Presença no Site</label>
+                <select
+                  value={sitePresence}
+                  onChange={(e) => setSitePresence(e.target.value)}
+                  className="w-full border rounded px-3 py-2"
+                >
+                  <option value="">Selecione</option>
+                  <option value="Sim">Sim</option>
+                  <option value="Não">Não</option>
+                </select>
               </div>
 
               <div>
