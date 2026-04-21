@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
 export default function HomePage() {
@@ -32,6 +32,7 @@ export default function HomePage() {
 
   const [entries, setEntries] = useState([])
   const [selectedStamp, setSelectedStamp] = useState('')
+  const [expandedClosingKeys, setExpandedClosingKeys] = useState({})
 
   useEffect(() => {
     const savedUser = localStorage.getItem('loggedUser')
@@ -43,9 +44,23 @@ export default function HomePage() {
     }
   }, [])
 
+  function parseDateOnly(dateString) {
+    if (!dateString) return null
+    const [year, month, day] = dateString.split('-').map(Number)
+    return new Date(year, month - 1, day)
+  }
+
   function formatDateBR(dateValue) {
     if (!dateValue) return ''
-    const [year, month, day] = dateValue.split('-')
+
+    if (typeof dateValue === 'string') {
+      const [year, month, day] = dateValue.split('-')
+      return `${day}/${month}/${year}`
+    }
+
+    const day = String(dateValue.getDate()).padStart(2, '0')
+    const month = String(dateValue.getMonth() + 1).padStart(2, '0')
+    const year = dateValue.getFullYear()
     return `${day}/${month}/${year}`
   }
 
@@ -76,9 +91,18 @@ export default function HomePage() {
     setEndTime('')
     setCause('')
     setWorkDone('')
+    setGenesisAccepted('')
+    setSitePresence('')
     setObservations('')
     setExtraType('50')
     setStampText('')
+  }
+
+  function toDateOnlyString(dateObj) {
+    const year = dateObj.getFullYear()
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0')
+    const day = String(dateObj.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
   }
 
   function getClosingPeriod(referenceDate = new Date()) {
@@ -88,22 +112,38 @@ export default function HomePage() {
     let start
     let end
 
-    if (day >= 15) {
-      start = new Date(today.getFullYear(), today.getMonth(), 15)
+    if (day >= 16) {
+      start = new Date(today.getFullYear(), today.getMonth(), 16)
       end = new Date(today.getFullYear(), today.getMonth() + 1, 15)
     } else {
-      start = new Date(today.getFullYear(), today.getMonth() - 1, 15)
+      start = new Date(today.getFullYear(), today.getMonth() - 1, 16)
       end = new Date(today.getFullYear(), today.getMonth(), 15)
     }
 
     return { start, end }
   }
 
-  function toDateOnlyString(dateObj) {
-    const year = dateObj.getFullYear()
-    const month = String(dateObj.getMonth() + 1).padStart(2, '0')
-    const day = String(dateObj.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
+  function getClosingPeriodByWorkDate(workDate) {
+    const baseDate = parseDateOnly(workDate)
+
+    if (!baseDate) return null
+
+    const day = baseDate.getDate()
+    const year = baseDate.getFullYear()
+    const month = baseDate.getMonth()
+
+    let start
+    let end
+
+    if (day >= 16) {
+      start = new Date(year, month, 16)
+      end = new Date(year, month + 1, 15)
+    } else {
+      start = new Date(year, month - 1, 16)
+      end = new Date(year, month, 15)
+    }
+
+    return { start, end }
   }
 
   function getPaymentProjectionLabel(periodEndDate) {
@@ -121,19 +161,21 @@ export default function HomePage() {
     return monthName.charAt(0).toUpperCase() + monthName.slice(1)
   }
 
-  function getSummaryData() {
-    const { start, end } = getClosingPeriod()
-    const startString = toDateOnlyString(start)
-    const endString = toDateOnlyString(end)
+  function getPaymentProjectionDateLabel(periodEndDate) {
+    const paymentDate = new Date(
+      periodEndDate.getFullYear(),
+      periodEndDate.getMonth() + 1,
+      5
+    )
 
-    const periodEntries = entries.filter((entry) => {
-      return entry.work_date >= startString && entry.work_date <= endString
-    })
+    return formatDateBR(paymentDate)
+  }
 
+  function buildSummaryFromEntries(entriesList, periodEndDate) {
     let total50 = 0
     let total100 = 0
 
-    for (const entry of periodEntries) {
+    for (const entry of entriesList) {
       const minutes = Number(entry.duration_minutes || 0)
 
       if (String(entry.extra_type) === '50') {
@@ -144,14 +186,94 @@ export default function HomePage() {
     }
 
     return {
-      periodStartLabel: formatDateBR(startString),
-      periodEndLabel: formatDateBR(endString),
-      paymentProjection: getPaymentProjectionLabel(end),
       total50,
       total100,
       totalGeneral: total50 + total100,
+      paymentProjection: periodEndDate
+        ? getPaymentProjectionLabel(periodEndDate)
+        : '',
+      paymentProjectionDate: periodEndDate
+        ? getPaymentProjectionDateLabel(periodEndDate)
+        : '',
     }
   }
+
+  const currentPeriod = useMemo(() => getClosingPeriod(), [])
+  const currentPeriodStartString = toDateOnlyString(currentPeriod.start)
+  const currentPeriodEndString = toDateOnlyString(currentPeriod.end)
+
+  const currentOpenEntries = useMemo(() => {
+    return entries.filter((entry) => {
+      return (
+        entry.work_date >= currentPeriodStartString &&
+        entry.work_date <= currentPeriodEndString
+      )
+    })
+  }, [entries, currentPeriodStartString, currentPeriodEndString])
+
+  const currentSummary = useMemo(() => {
+    const summary = buildSummaryFromEntries(currentOpenEntries, currentPeriod.end)
+
+    return {
+      ...summary,
+      periodStartLabel: formatDateBR(currentPeriod.start),
+      periodEndLabel: formatDateBR(currentPeriod.end),
+    }
+  }, [currentOpenEntries, currentPeriod])
+
+  const closingGroups = useMemo(() => {
+    const groupsMap = {}
+
+    for (const entry of entries) {
+      const period = getClosingPeriodByWorkDate(entry.work_date)
+
+      if (!period) continue
+
+      const startString = toDateOnlyString(period.start)
+      const endString = toDateOnlyString(period.end)
+      const key = `${startString}_${endString}`
+
+      if (!groupsMap[key]) {
+        groupsMap[key] = {
+          key,
+          start: period.start,
+          end: period.end,
+          startString,
+          endString,
+          entries: [],
+        }
+      }
+
+      groupsMap[key].entries.push(entry)
+    }
+
+    const groups = Object.values(groupsMap)
+      .filter((group) => group.endString < currentPeriodStartString)
+      .map((group) => {
+        const orderedEntries = [...group.entries].sort((a, b) => {
+          if (a.work_date < b.work_date) return 1
+          if (a.work_date > b.work_date) return -1
+          return b.id - a.id
+        })
+
+        const summary = buildSummaryFromEntries(orderedEntries, group.end)
+
+        return {
+          ...group,
+          entries: orderedEntries,
+          periodStartLabel: formatDateBR(group.start),
+          periodEndLabel: formatDateBR(group.end),
+          ...summary,
+        }
+      })
+      .sort((a, b) => {
+        if (a.startString < b.startString) return 1
+        if (a.startString > b.startString) return -1
+        return 0
+      })
+
+    return groups
+  }, [entries, currentPeriodStartString])
 
   async function handleRegister(e) {
     e.preventDefault()
@@ -261,6 +383,7 @@ export default function HomePage() {
     setStampText('')
     setEntries([])
     setSelectedStamp('')
+    setExpandedClosingKeys({})
     setScreen('login')
   }
 
@@ -269,10 +392,6 @@ export default function HomePage() {
     setStampText('')
     clearLaunchForm()
     setScreen('launch')
-  }
-
-  function handleGoClosings() {
-    setMessage('Próximo passo: criar a tela de fechamentos.')
   }
 
   function handleBackToDashboard() {
@@ -309,17 +428,17 @@ export default function HomePage() {
     }
 
     const generatedStamp = `Nome: ${loggedUser.name}
-    RE: ${loggedUser.re}
-    Site: ${site}
-    TA: ${ta}
-    Data: ${formatDateBR(date)}
-    Início Atividade: ${startTime}
-    Fim Atividade: ${endTime}
-    Aceite no Genesis: ${genesisAccepted}
-    Presença no Site: ${sitePresence}
-    Motivo: ${cause}
-    Serviço: ${workDone}
-    OBS: ${observations || '-'}`
+RE: ${loggedUser.re}
+Site: ${site}
+TA: ${ta}
+Data: ${formatDateBR(date)}
+Início Atividade: ${startTime}
+Fim Atividade: ${endTime}
+Aceite no Genesis: ${genesisAccepted}
+Presença no Site: ${sitePresence}
+Motivo: ${cause}
+Serviço: ${workDone}
+OBS: ${observations || '-'}`
 
     setStampText(generatedStamp)
     setLoading(true)
@@ -358,12 +477,8 @@ export default function HomePage() {
     setMessage('Carimbo gerado e salvo com sucesso.')
   }
 
-  async function handleOpenEntries() {
-    if (!loggedUser) return
-
-    setLoading(true)
-    setMessage('')
-    setSelectedStamp('')
+  async function fetchUserEntries() {
+    if (!loggedUser) return null
 
     const { data, error } = await supabase
       .from('entries')
@@ -372,16 +487,48 @@ export default function HomePage() {
       .order('work_date', { ascending: false })
       .order('id', { ascending: false })
 
-    setLoading(false)
-
     if (error) {
       console.error(error)
       setMessage('Erro ao carregar lançamentos.')
-      return
+      return null
     }
 
-    setEntries(data || [])
+    return data || []
+  }
+
+  async function handleOpenEntries() {
+    if (!loggedUser) return
+
+    setLoading(true)
+    setMessage('')
+    setSelectedStamp('')
+
+    const data = await fetchUserEntries()
+
+    setLoading(false)
+
+    if (!data) return
+
+    setEntries(data)
     setScreen('entries')
+  }
+
+  async function handleGoClosings() {
+    if (!loggedUser) return
+
+    setLoading(true)
+    setMessage('')
+    setSelectedStamp('')
+
+    const data = await fetchUserEntries()
+
+    setLoading(false)
+
+    if (!data) return
+
+    setEntries(data)
+    setExpandedClosingKeys({})
+    setScreen('closings')
   }
 
   function handleViewStamp(entry) {
@@ -399,6 +546,18 @@ export default function HomePage() {
 
     try {
       await navigator.clipboard.writeText(stamp)
+      setMessage('Carimbo copiado com sucesso.')
+    } catch (error) {
+      console.error(error)
+      setMessage('Não foi possível copiar o carimbo.')
+    }
+  }
+
+  async function handleCopySelectedStamp() {
+    if (!selectedStamp) return
+
+    try {
+      await navigator.clipboard.writeText(selectedStamp)
       setMessage('Carimbo copiado com sucesso.')
     } catch (error) {
       console.error(error)
@@ -434,11 +593,21 @@ export default function HomePage() {
     setMessage('Lançamento excluído com sucesso.')
   }
 
-  const summary = getSummaryData()
+  function toggleClosingDetails(key) {
+    setExpandedClosingKeys((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }))
+  }
+
+  const containerMaxWidth =
+    screen === 'entries' || screen === 'closings' || screen === 'launch'
+      ? 'max-w-4xl'
+      : 'max-w-md'
 
   return (
     <main className="min-h-screen bg-gray-100 text-black flex items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-md text-black">
+      <div className={`w-full ${containerMaxWidth} rounded-2xl bg-white p-6 shadow-md text-black`}>
         {screen === 'login' && (
           <>
             <h1 className="mb-6 text-center text-2xl font-bold text-black">
@@ -616,9 +785,10 @@ export default function HomePage() {
 
               <button
                 onClick={handleGoClosings}
+                disabled={loading}
                 className="w-full rounded-lg bg-purple-600 p-3 font-medium text-white hover:bg-purple-700"
               >
-                Ver Fechamentos
+                {loading ? 'Carregando...' : 'Ver Fechamentos'}
               </button>
 
               <button
@@ -641,7 +811,7 @@ export default function HomePage() {
               Novo Lançamento de Hora Extra
             </h1>
 
-            <form onSubmit={handleGenerateStamp} className="space-y-4">
+            <form onSubmit={handleGenerateStamp} className="grid gap-4 md:grid-cols-2">
               <div>
                 <label className="mb-1 block text-sm font-medium text-black">
                   Nome
@@ -706,6 +876,20 @@ export default function HomePage() {
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-black">
+                  Tipo Hora Extra
+                </label>
+                <select
+                  value={extraType}
+                  onChange={(e) => setExtraType(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 bg-white p-3 text-black outline-none"
+                >
+                  <option value="50">50%</option>
+                  <option value="100">100%</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-black">
                   Início Atividade
                 </label>
                 <input
@@ -733,7 +917,7 @@ export default function HomePage() {
                 <select
                   value={genesisAccepted}
                   onChange={(e) => setGenesisAccepted(e.target.value)}
-                  className="w-full border rounded px-3 py-2"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-3"
                 >
                   <option value="">Selecione</option>
                   <option value="Sim">Sim</option>
@@ -746,7 +930,7 @@ export default function HomePage() {
                 <select
                   value={sitePresence}
                   onChange={(e) => setSitePresence(e.target.value)}
-                  className="w-full border rounded px-3 py-2"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-3"
                 >
                   <option value="">Selecione</option>
                   <option value="Sim">Sim</option>
@@ -754,7 +938,7 @@ export default function HomePage() {
                 </select>
               </div>
 
-              <div>
+              <div className="md:col-span-2">
                 <label className="mb-1 block text-sm font-medium text-black">
                   Motivo
                 </label>
@@ -767,7 +951,7 @@ export default function HomePage() {
                 />
               </div>
 
-              <div>
+              <div className="md:col-span-2">
                 <label className="mb-1 block text-sm font-medium text-black">
                   Serviço Executado
                 </label>
@@ -780,7 +964,7 @@ export default function HomePage() {
                 />
               </div>
 
-              <div>
+              <div className="md:col-span-2">
                 <label className="mb-1 block text-sm font-medium text-black">
                   Observações
                 </label>
@@ -793,27 +977,15 @@ export default function HomePage() {
                 />
               </div>
 
-              <div>
-                <label className="mb-1 block text-sm font-medium text-black">
-                  Tipo Hora Extra
-                </label>
-                <select
-                  value={extraType}
-                  onChange={(e) => setExtraType(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 bg-white p-3 text-black outline-none"
+              <div className="md:col-span-2">
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full rounded-lg bg-blue-600 p-3 font-medium text-white hover:bg-blue-700"
                 >
-                  <option value="50">50%</option>
-                  <option value="100">100%</option>
-                </select>
+                  {loading ? 'Gerando e salvando...' : 'Gerar Carimbo'}
+                </button>
               </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full rounded-lg bg-blue-600 p-3 font-medium text-white hover:bg-blue-700"
-              >
-                {loading ? 'Gerando e salvando...' : 'Gerar Carimbo'}
-              </button>
             </form>
 
             <button
@@ -843,41 +1015,46 @@ export default function HomePage() {
             </h1>
 
             <div className="mb-4 rounded-xl border bg-blue-50 p-4">
-              <h2 className="text-lg font-bold text-black">Resumo do Fechamento</h2>
+              <h2 className="text-lg font-bold text-black">Resumo do Fechamento Atual</h2>
 
               <p className="mt-2 text-sm">
                 <span className="font-semibold">Período:</span>{' '}
-                {summary.periodStartLabel} até {summary.periodEndLabel}
+                {currentSummary.periodStartLabel} até {currentSummary.periodEndLabel}
               </p>
 
               <p className="mt-1 text-sm">
                 <span className="font-semibold">Projeção de recebimento:</span>{' '}
-                {summary.paymentProjection}
+                {currentSummary.paymentProjection}
+              </p>
+
+              <p className="mt-1 text-sm">
+                <span className="font-semibold">Previsão de pagamento:</span>{' '}
+                {currentSummary.paymentProjectionDate}
               </p>
 
               <p className="mt-1 text-sm">
                 <span className="font-semibold">Horas 50%:</span>{' '}
-                {formatMinutes(summary.total50)}
+                {formatMinutes(currentSummary.total50)}
               </p>
 
               <p className="mt-1 text-sm">
                 <span className="font-semibold">Horas 100%:</span>{' '}
-                {formatMinutes(summary.total100)}
+                {formatMinutes(currentSummary.total100)}
               </p>
 
               <p className="mt-1 text-sm">
                 <span className="font-semibold">Total geral:</span>{' '}
-                {formatMinutes(summary.totalGeneral)}
+                {formatMinutes(currentSummary.totalGeneral)}
               </p>
             </div>
 
-            {entries.length === 0 ? (
+            {currentOpenEntries.length === 0 ? (
               <div className="rounded-xl border bg-gray-50 p-4 text-center text-sm text-gray-600">
-                Nenhum lançamento encontrado.
+                Nenhum lançamento encontrado no período atual.
               </div>
             ) : (
-              <div className="space-y-4">
-                {entries.map((entry) => (
+              <div className="grid gap-4 md:grid-cols-2">
+                {currentOpenEntries.map((entry) => (
                   <div key={entry.id} className="rounded-xl border bg-gray-50 p-4">
                     <p className="text-sm">
                       <span className="font-semibold">Data:</span>{' '}
@@ -943,15 +1120,164 @@ export default function HomePage() {
             {message && (
               <p className="mt-4 text-center text-sm text-blue-700">{message}</p>
             )}
+          </>
+        )}
 
-            {selectedStamp && (
-              <div className="mt-4 rounded-xl border bg-gray-50 p-4 whitespace-pre-line text-sm text-black">
-                {selectedStamp}
+        {screen === 'closings' && loggedUser && (
+          <>
+            <h1 className="mb-6 text-center text-2xl font-bold text-black">
+              Fechamentos
+            </h1>
+
+            {closingGroups.length === 0 ? (
+              <div className="rounded-xl border bg-gray-50 p-4 text-center text-sm text-gray-600">
+                Nenhum fechamento encerrado encontrado.
               </div>
+            ) : (
+              <div className="space-y-4">
+                {closingGroups.map((closing) => {
+                  const isExpanded = !!expandedClosingKeys[closing.key]
+
+                  return (
+                    <div key={closing.key} className="rounded-2xl border bg-gray-50 p-4">
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <p className="text-sm">
+                          <span className="font-semibold">Período:</span>{' '}
+                          {closing.periodStartLabel} até {closing.periodEndLabel}
+                        </p>
+
+                        <p className="text-sm">
+                          <span className="font-semibold">Projeção:</span>{' '}
+                          {closing.paymentProjection}
+                        </p>
+
+                        <p className="text-sm">
+                          <span className="font-semibold">Previsão de pagamento:</span>{' '}
+                          {closing.paymentProjectionDate}
+                        </p>
+
+                        <p className="text-sm">
+                          <span className="font-semibold">Horas 50%:</span>{' '}
+                          {formatMinutes(closing.total50)}
+                        </p>
+
+                        <p className="text-sm">
+                          <span className="font-semibold">Horas 100%:</span>{' '}
+                          {formatMinutes(closing.total100)}
+                        </p>
+
+                        <p className="text-sm">
+                          <span className="font-semibold">Total geral:</span>{' '}
+                          {formatMinutes(closing.totalGeneral)}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => toggleClosingDetails(closing.key)}
+                        className="mt-4 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700"
+                      >
+                        {isExpanded ? 'Ocultar detalhes' : 'Ver detalhes'}
+                      </button>
+
+                      {isExpanded && (
+                        <div className="mt-4 space-y-3 border-t pt-4">
+                          {closing.entries.map((entry) => (
+                            <div key={entry.id} className="rounded-xl border bg-white p-4">
+                              <div className="grid gap-2 md:grid-cols-2">
+                                <p className="text-sm">
+                                  <span className="font-semibold">Data:</span>{' '}
+                                  {formatDateBR(entry.work_date)}
+                                </p>
+
+                                <p className="text-sm">
+                                  <span className="font-semibold">Tipo:</span>{' '}
+                                  {entry.extra_type}%
+                                </p>
+
+                                <p className="text-sm">
+                                  <span className="font-semibold">Horário:</span>{' '}
+                                  {entry.start_time?.slice(0, 5)} às {entry.end_time?.slice(0, 5)}
+                                </p>
+
+                                <p className="text-sm">
+                                  <span className="font-semibold">Duração:</span>{' '}
+                                  {formatMinutes(entry.duration_minutes)}
+                                </p>
+
+                                <p className="text-sm md:col-span-2">
+                                  <span className="font-semibold">Site:</span>{' '}
+                                  {entry?.payload_json?.site || '-'}
+                                </p>
+                              </div>
+
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                  onClick={() => handleViewStamp(entry)}
+                                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                                >
+                                  Ver carimbo
+                                </button>
+
+                                <button
+                                  onClick={() => handleCopyStamp(entry)}
+                                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                                >
+                                  Copiar carimbo
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleBackToDashboard}
+              className="mt-4 w-full rounded-lg border border-gray-300 bg-white p-3 font-medium text-black hover:bg-gray-50"
+            >
+              Voltar ao Dashboard
+            </button>
+
+            {message && (
+              <p className="mt-4 text-center text-sm text-blue-700">{message}</p>
             )}
           </>
         )}
       </div>
+
+      {selectedStamp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-xl font-bold text-black">Carimbo do lançamento</h2>
+
+            <div className="mt-4 max-h-[60vh] overflow-y-auto rounded-xl border bg-gray-50 p-4 whitespace-pre-line text-sm text-black">
+              {selectedStamp}
+            </div>
+
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <button
+                onClick={handleCopySelectedStamp}
+                className="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700"
+              >
+                Copiar
+              </button>
+
+              <button
+                onClick={() => setSelectedStamp('')}
+                className="rounded-lg bg-gray-300 px-4 py-2 font-medium text-black hover:bg-gray-400"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
