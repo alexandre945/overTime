@@ -1,0 +1,17 @@
+{
+  "name": "Horas Extras",
+  "short_name": "Horas Extras",
+  "description": "Sistema para controle e registro de horas extras",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#071b35",
+  "theme_color": "#071b35",
+  "icons": [
+    {
+      "src": "/horas-extras.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
